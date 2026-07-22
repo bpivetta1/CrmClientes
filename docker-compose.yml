@@ -65,8 +65,8 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       FACEBOOK_APP_ID: ${FACEBOOK_APP_ID:-}
       FACEBOOK_APP_SECRET: ${FACEBOOK_APP_SECRET:-}
-      # Evolution-GO (migracao da engine Baileys — em fases; default desligado)
-      EVOLUTION_ENABLED: ${EVOLUTION_ENABLED:-false}
+      # Evolution-GO — engine WhatsApp unica (Baileys removido).
+      # IMPORTANTE: defina EVOLUTION_API_KEY no Coolify (sem ela o WhatsApp nao conecta).
       EVOLUTION_URL: ${EVOLUTION_URL:-https://evolution-go.nefo.pro}
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:-}
       EVOLUTION_TIMEOUT: ${EVOLUTION_TIMEOUT:-30000}

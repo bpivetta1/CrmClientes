@@ -46,11 +46,14 @@ Frontend em `http://localhost:3000`, API em `http://localhost:8081`.
 ## Estrutura
 
 ```
-backend/    API Node/TS (Sequelize + Baileys + Redis/Bull)
+backend/    API Node/TS (Sequelize + Evolution-GO + Redis/Bull)
 frontend/   SPA React (Material UI)
 docker-compose.yml
 .env.example
 ```
+
+> Engine WhatsApp: **Evolution-GO** (REST + webhook). Defina `EVOLUTION_API_KEY`
+> no Coolify. A conexão gera o QR (polling) na tela de Conexões do WhaTicket.
 
 ## Persistência
 - `pg_data` — banco Postgres

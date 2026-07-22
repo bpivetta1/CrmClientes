@@ -1,8 +1,7 @@
-// Configuração da integração Evolution-GO (troca da engine Baileys).
-// Aditivo: se EVOLUTION_ENABLED != "true", nada muda — o WhaTicket segue na Baileys.
+// Configuração da integração Evolution-GO (engine WhatsApp única).
+// EVOLUTION_API_KEY é obrigatória para o WhatsApp funcionar.
 
 export default {
-  enabled: process.env.EVOLUTION_ENABLED === "true",
   baseUrl: (process.env.EVOLUTION_URL || "").replace(/\/+$/, ""),
   apiKey: process.env.EVOLUTION_API_KEY || "",
   // timeout das chamadas REST (ms)
