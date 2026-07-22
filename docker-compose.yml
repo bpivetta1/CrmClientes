@@ -63,6 +63,11 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       FACEBOOK_APP_ID: ${FACEBOOK_APP_ID:-}
       FACEBOOK_APP_SECRET: ${FACEBOOK_APP_SECRET:-}
+      # Evolution-GO (migracao da engine Baileys — em fases; default desligado)
+      EVOLUTION_ENABLED: ${EVOLUTION_ENABLED:-false}
+      EVOLUTION_URL: ${EVOLUTION_URL:-https://evolution-go.nefo.pro}
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:-}
+      EVOLUTION_TIMEOUT: ${EVOLUTION_TIMEOUT:-30000}
     volumes:
       - backend_public:/usr/src/app/public
     expose:
