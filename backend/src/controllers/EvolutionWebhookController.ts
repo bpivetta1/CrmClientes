@@ -1,14 +1,16 @@
-// Recebe os webhooks da Evolution-GO e traduz para o comportamento que o
-// WhaTicket já tem (atualiza o Whatsapp + emite no socket), espelhando o que a
-// libs/wbot.ts faz no connection.update da Baileys.
+// Recebe os webhooks da Evolution-GO e injeta as mensagens no pipeline existente
+// do WhaTicket (handleMessage), traduzindo o formato whatsmeow (data.Info +
+// data.Message) para o proto.IWebMessageInfo que a Baileys/handleMessage usa.
 //
-// Eventos de status: QRCode, Connected/PairSuccess, LoggedOut.
-// Evento "Message" (inbound): Fase 4 — por enquanto loga o payload REAL para
-// fecharmos o parser com certeza (sem adivinhação) assim que chegar mensagem.
+// Eventos (categorias reais): MESSAGE, READ_RECEIPT, CONNECTION.
+// QR/conexão são geridos por polling em EvolutionSession; aqui tratamos MESSAGE
+// (inbound) e, como reforço, mudanças de conexão que cheguem via webhook.
 
 import { Request, Response } from "express";
 import Whatsapp from "../models/Whatsapp";
 import { getIO } from "../libs/socket";
+import { getWbot } from "../libs/wbot";
+import { handleMessage } from "../services/WbotServices/wbotMessageListener";
 import logger from "../utils/logger";
 
 const emitSession = (companyId: number, session: Whatsapp) => {
@@ -17,53 +19,68 @@ const emitSession = (companyId: number, session: Whatsapp) => {
     .emit(`company-${companyId}-whatsappSession`, { action: "update", session });
 };
 
+// whatsmeow data.Info + data.Message -> proto.IWebMessageInfo (formato Baileys).
+// Os nomes dos campos em Message (conversation, extendedTextMessage, imageMessage
+// ...) são iguais nos dois (ambos são o proto waE2E do WhatsApp).
+const toIWebMessageInfo = (data: any): any => {
+  const info = data?.Info || {};
+  const ts = info.Timestamp
+    ? Math.floor(new Date(info.Timestamp).getTime() / 1000)
+    : Math.floor(Date.now() / 1000);
+  return {
+    key: {
+      id: info.ID,
+      remoteJid: info.Chat,
+      fromMe: !!info.IsFromMe,
+      participant: info.IsGroup ? info.Sender : undefined
+    },
+    message: data?.Message || {},
+    pushName: info.PushName || "",
+    messageTimestamp: ts
+  };
+};
+
 export const handleEvolutionWebhook = async (req: Request, res: Response): Promise<Response> => {
   const { whatsappId } = req.params;
   const { event, data } = req.body || {};
+  const ev = String(event || "").toUpperCase();
 
   const whatsapp = await Whatsapp.findByPk(whatsappId);
-  if (!whatsapp) {
-    // responde 2xx mesmo assim para a Evolution não ficar retransmitindo
-    return res.status(200).json({ ignored: true });
-  }
+  if (!whatsapp) return res.status(200).json({ ignored: true });
   const companyId = whatsapp.companyId;
 
   try {
-    switch (event) {
-      case "QRCode": {
-        // data.code = string do QR (o front renderiza igual ao Baileys)
-        await whatsapp.update({ qrcode: data?.code || "", status: "qrcode", retries: 0, number: "" });
-        emitSession(companyId, whatsapp);
-        break;
+    if (ev.startsWith("MESSAGE")) {
+      // log do payload real (ajuda a validar mídia/edge cases)
+      logger.info(`[evolution][inbound][wpp:${whatsappId}] ${JSON.stringify(data).slice(0, 3000)}`);
+      try {
+        const wbot = getWbot(Number(whatsappId));
+        const mapped = toIWebMessageInfo(data);
+        if (mapped.key?.id) {
+          await handleMessage(mapped, wbot as any, companyId);
+        }
+      } catch (err) {
+        logger.error(`[evolution] handleMessage falhou wpp:${whatsappId}: ${err}`);
       }
-
-      case "Connected":
-      case "PairSuccess": {
+    } else if (ev.includes("CONNECT") || ev.includes("QR") || ev.includes("LOGGED") || ev.includes("PAIR")) {
+      // reforço à detecção por polling
+      const connected = data?.Connected || data?.status === "connected" || ev.includes("CONNECTED");
+      if (ev.includes("LOGGED")) {
+        await whatsapp.update({ status: "PENDING", session: "", qrcode: "" });
+        emitSession(companyId, whatsapp);
+      } else if (connected) {
         const number = (data?.jid || "").split("@")[0] || whatsapp.number || "";
         await whatsapp.update({ status: "CONNECTED", qrcode: "", retries: 0, number });
         emitSession(companyId, whatsapp);
-        break;
       }
-
-      case "LoggedOut": {
-        await whatsapp.update({ status: "PENDING", session: "", qrcode: "" });
-        emitSession(companyId, whatsapp);
-        break;
-      }
-
-      case "Message": {
-        // Fase 4 (inbound): logar o payload real e encaminhar ao pipeline.
-        logger.info(`[evolution][inbound][wpp:${whatsappId}] ${JSON.stringify(data).slice(0, 4000)}`);
-        // TODO Fase 4: mapear data.Info -> key{id,remoteJid,fromMe,participant} +
-        // data.Message e chamar handleMessage(adaptedMsg, getWbot(whatsappId), companyId).
-        break;
-      }
-
-      default:
-        logger.debug(`[evolution] evento não tratado: ${event}`);
+    } else if (ev.includes("READ")) {
+      // ACK / read receipts — Fase 5
+      logger.debug(`[evolution] READ_RECEIPT wpp:${whatsappId}`);
+    } else {
+      logger.debug(`[evolution] evento não tratado: ${event}`);
     }
   } catch (err) {
-    logger.error(`[evolution] erro tratando webhook ${event}: ${err}`);
+    logger.error(`[evolution] erro no webhook ${event}: ${err}`);
   }
 
   return res.status(200).json({ ok: true });

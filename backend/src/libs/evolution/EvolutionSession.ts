@@ -1,35 +1,46 @@
 // Adapter que faz a Evolution-GO "parecer" uma sessão Baileys (wbot).
-// Expõe o subconjunto de métodos que o WhaTicket chama em wbot.* e traduz
-// para chamadas REST da Evolution. Assim os Send*Services e helpers seguem
-// inalterados. Registrado no mesmo `sessions[]` via addWbotSession.
+// Expõe o subconjunto de métodos que o WhaTicket chama em wbot.* e traduz para
+// REST da Evolution, mantendo Send*Services e helpers inalterados.
 //
-// Fase 2/3: conexão/QR + envio (texto/mídia/link/contato).
-// Métodos de baixo nível da Baileys sem equivalente na Evolution
-// (relayMessage/upsertMessage/waUploadToServer/updateMediaMessage) lançam erro
-// claro — são usados só em editar/encaminhar (Fase 5).
+// Auth por instância = header apikey com o TOKEN da instância (determinístico
+// por Whatsapp). QR/conexão via POLLING (/instance/qr + /instance/status);
+// inbound de mensagens via webhook (EvolutionWebhookController).
 
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
 import { v4 as uuidv4 } from "uuid";
 import mime from "mime-types";
 import logger from "../../utils/logger";
 import Whatsapp from "../../models/Whatsapp";
+import { getIO } from "../socket";
 import { evolutionClient, EvolutionMediaType } from "./EvolutionClient";
-import { addWbotSession } from "../wbot";
+import { addWbotSession, removeWbotSession } from "../wbot";
 
 const publicFolder = path.resolve(__dirname, "..", "..", "..", "public");
 const backendUrl = (process.env.BACKEND_URL || "").replace(/\/+$/, "");
 
-// eventos que queremos receber no webhook (nomes do whatsmeow/Evolution)
-const SUBSCRIBE_EVENTS = [
-  "Message",
-  "QRCode",
-  "PairSuccess",
-  "Connected",
-  "LoggedOut",
-  "ReadReceipt",
-  "OfflineSyncCompleted"
-];
+const SUBSCRIBE_EVENTS = ["MESSAGE", "READ_RECEIPT", "CONNECTION"];
+const QR_POLL_MS = 4000;
+const QR_MAX_TICKS = 30; // ~2 min tentando parear antes de desistir
+
+// Token determinístico por instância (não precisa persistir). Deriva de id +
+// segredo do ambiente; o servidor Evolution aceita o token que enviamos.
+export const evolutionTokenFor = (whatsapp: Whatsapp): string => {
+  const secret = process.env.JWT_SECRET || process.env.MASTER_KEY || "whaticket";
+  const h = crypto
+    .createHash("sha256")
+    .update(`${whatsapp.id}:${whatsapp.companyId}:${secret}`)
+    .digest("hex")
+    .slice(0, 24);
+  return `wt-${whatsapp.id}-${h}`;
+};
+
+const emitSession = (companyId: number, whatsapp: Whatsapp) => {
+  getIO()
+    .of(String(companyId))
+    .emit(`company-${companyId}-whatsappSession`, { action: "update", session: whatsapp });
+};
 
 // grava um buffer no /public e devolve a URL pública (Evolution baixa por URL)
 const hostBuffer = (buffer: Buffer, mimetype?: string, fileName?: string): string => {
@@ -37,23 +48,33 @@ const hostBuffer = (buffer: Buffer, mimetype?: string, fileName?: string): strin
     (fileName && path.extname(fileName)) ||
     (mimetype ? `.${mime.extension(mimetype) || "bin"}` : ".bin");
   const name = `evo_${Date.now()}_${uuidv4().slice(0, 8)}${ext}`;
-  // ponytail: sem limpeza automática destes arquivos enviados; adicionar um
-  // cron de expurgo se o volume /public crescer demais.
+  // ponytail: sem expurgo automático destes arquivos enviados; adicionar cron se crescer.
   fs.writeFileSync(path.join(publicFolder, name), buffer);
   return `${backendUrl}/public/${name}`;
 };
 
-const mapMediaType = (content: any): { type: EvolutionMediaType; buffer: Buffer; mimetype?: string; fileName?: string; caption?: string; ptt?: boolean } | null => {
-  if (content.image) return { type: "image", buffer: content.image, mimetype: content.mimetype, fileName: content.fileName, caption: content.caption };
-  if (content.video) return { type: "video", buffer: content.video, mimetype: content.mimetype, fileName: content.fileName, caption: content.caption };
-  if (content.audio) return { type: "audio", buffer: content.audio, mimetype: content.mimetype || "audio/mpeg", fileName: content.fileName, ptt: content.ptt };
-  if (content.document) return { type: "document", buffer: content.document, mimetype: content.mimetype, fileName: content.fileName, caption: content.caption };
+const mapMediaType = (content: any) => {
+  if (content.image) return { type: "image" as EvolutionMediaType, buffer: content.image, mimetype: content.mimetype, fileName: content.fileName, caption: content.caption };
+  if (content.video) return { type: "video" as EvolutionMediaType, buffer: content.video, mimetype: content.mimetype, fileName: content.fileName, caption: content.caption };
+  if (content.audio) return { type: "audio" as EvolutionMediaType, buffer: content.audio, mimetype: content.mimetype || "audio/mpeg", fileName: content.fileName };
+  if (content.document) return { type: "document" as EvolutionMediaType, buffer: content.document, mimetype: content.mimetype, fileName: content.fileName, caption: content.caption };
   return null;
+};
+
+// monta um objeto no formato WAMessage que os callers esperam ler
+const toWAMessage = (res: any, jid: string, text: string) => {
+  const id = res?.data?.id || res?.id || res?.key?.id || uuidv4();
+  return {
+    key: { id, remoteJid: jid, fromMe: true },
+    message: { conversation: text },
+    messageTimestamp: Math.floor(Date.now() / 1000),
+    status: 1
+  };
 };
 
 export interface EvolutionSessionType {
   id: number;
-  instanceId: string;
+  token: string;
   type: string;
   user?: { id: string };
   sendMessage: (jid: string, content: any, options?: any) => Promise<any>;
@@ -66,26 +87,22 @@ export interface EvolutionSessionType {
   logout: () => Promise<void>;
   ws: { close: () => void };
   ev: { on: () => void; removeAllListeners: () => void };
+  _qrPoller?: NodeJS.Timeout;
 }
 
-// Cria a sessão-adapter para um Whatsapp e a registra em sessions[].
 export const initEvolutionSession = async (whatsapp: Whatsapp): Promise<EvolutionSessionType> => {
-  const instanceId = `whaticket-${whatsapp.id}`;
+  const token = evolutionTokenFor(whatsapp);
+  const instanceName = `whaticket-${whatsapp.companyId}-${whatsapp.id}`;
   const webhookUrl = `${backendUrl}/evolution/webhook/${whatsapp.id}`;
+  const companyId = whatsapp.companyId;
 
-  // cria a instância (idempotente do lado da Evolution — ignora se já existe)
+  // cria a instância (idempotente — ignora se já existe) e conecta com webhook
   try {
-    await evolutionClient.createInstance({
-      instanceId,
-      name: whatsapp.name || instanceId,
-      token: instanceId
-    });
+    await evolutionClient.createInstance({ name: instanceName, token });
   } catch (err: any) {
-    logger.warn(`[evolution] createInstance ${instanceId}: ${err?.response?.status || err?.message}`);
+    logger.warn(`[evolution] createInstance ${instanceName}: ${err?.response?.status || err?.message}`);
   }
-
-  // conecta e registra o webhook + eventos assinados
-  await evolutionClient.connectInstance(instanceId, {
+  await evolutionClient.connectInstance(token, {
     webhookUrl,
     subscribe: SUBSCRIBE_EVENTS,
     immediate: true
@@ -93,7 +110,7 @@ export const initEvolutionSession = async (whatsapp: Whatsapp): Promise<Evolutio
 
   const session: EvolutionSessionType = {
     id: whatsapp.id,
-    instanceId,
+    token,
     type: "md",
     user: { id: whatsapp.number ? `${whatsapp.number}@s.whatsapp.net` : "" },
 
@@ -103,37 +120,25 @@ export const initEvolutionSession = async (whatsapp: Whatsapp): Promise<Evolutio
           ? { messageId: options.quoted.key.id, participant: options.quoted.key.participant }
           : undefined;
 
-      // texto
       if (typeof content.text === "string") {
-        const res = await evolutionClient.sendText(instanceId, {
-          number: jid,
-          text: content.text,
-          quoted
-        });
+        const res = await evolutionClient.sendText(token, { number: jid, text: content.text, quoted });
         return toWAMessage(res, jid, content.text);
       }
 
-      // mídia
       const media = mapMediaType(content);
       if (media) {
         const url = hostBuffer(media.buffer, media.mimetype, media.fileName);
-        const res = await evolutionClient.sendMedia(instanceId, {
-          number: jid,
-          url,
-          type: media.type,
-          caption: media.caption,
-          filename: media.fileName,
-          quoted
+        const res = await evolutionClient.sendMedia(token, {
+          number: jid, url, type: media.type, caption: media.caption, filename: media.fileName, quoted
         });
         return toWAMessage(res, jid, media.caption || "");
       }
 
-      // contato (vCard)
       if (content.contacts) {
-        // ponytail: /send/contact existe mas o payload exato não está no swagger;
-        // por ora manda o vCard como texto (não quebra o fluxo). Ajustar na Fase 5.
+        // ponytail: /send/contact existe mas payload não documentado; envia vCard
+        // como texto por ora (não quebra o fluxo). Ajustar na Fase 5.
         const vcardText = content.contacts?.contacts?.[0]?.vcard || content.contacts?.displayName || "";
-        const res = await evolutionClient.sendText(instanceId, { number: jid, text: vcardText });
+        const res = await evolutionClient.sendText(token, { number: jid, text: vcardText });
         return toWAMessage(res, jid, vcardText);
       }
 
@@ -141,8 +146,7 @@ export const initEvolutionSession = async (whatsapp: Whatsapp): Promise<Evolutio
     },
 
     async onWhatsApp(jid: string) {
-      // ponytail: endpoint de verificação de número não confirmado no swagger;
-      // assume existência para não bloquear o fluxo até validarmos.
+      // ponytail: verificação de número não confirmada no swagger; assume existência.
       const number = jid.replace(/@.*$/, "");
       return [{ jid: `${number}@s.whatsapp.net`, exists: true }];
     },
@@ -150,52 +154,83 @@ export const initEvolutionSession = async (whatsapp: Whatsapp): Promise<Evolutio
     async profilePictureUrl() {
       return undefined as unknown as string;
     },
-
-    async presenceSubscribe() {
-      /* no-op — presença é opcional */
-    },
-
-    async sendPresenceUpdate() {
-      /* no-op */
-    },
+    async presenceSubscribe() { /* opcional */ },
+    async sendPresenceUpdate() { /* opcional */ },
 
     async readMessages(keys: any[]) {
       try {
         for (const k of keys || []) {
-          await evolutionClient.markRead(instanceId, { messageId: k?.id, chat: k?.remoteJid });
+          await evolutionClient.markRead(token, { messageId: k?.id, chat: k?.remoteJid });
         }
       } catch (err: any) {
         logger.warn(`[evolution] markRead: ${err?.message}`);
       }
     },
 
-    async updateBlockStatus() {
-      /* ponytail: mapear para endpoint de bloqueio quando confirmado (Fase 5) */
-    },
+    async updateBlockStatus() { /* Fase 5 */ },
 
     async logout() {
+      if (session._qrPoller) clearInterval(session._qrPoller);
       try {
-        await evolutionClient.logout(instanceId);
+        await evolutionClient.logout(token);
       } catch (err: any) {
         logger.warn(`[evolution] logout: ${err?.message}`);
       }
     },
 
-    ws: { close: () => { /* no-op: conexão é gerida pela Evolution */ } },
-    ev: { on: () => { /* eventos chegam via webhook */ }, removeAllListeners: () => {} }
+    ws: { close: () => { if (session._qrPoller) clearInterval(session._qrPoller); } },
+    ev: { on: () => { /* eventos via webhook */ }, removeAllListeners: () => {} }
   };
 
   addWbotSession(session);
+  startQrPolling(session, whatsapp);
   return session;
 };
 
-// monta um objeto no formato WAMessage que os callers esperam ler (key.id, message)
-const toWAMessage = (res: any, jid: string, text: string) => {
-  const id = res?.id || res?.key?.id || res?.data?.id || uuidv4();
-  return {
-    key: { id, remoteJid: jid, fromMe: true },
-    message: { conversation: text },
-    messageTimestamp: Math.floor(Date.now() / 1000),
-    status: 1
-  };
+// Polling de QR + status: a Evolution entrega o QR por polling (não webhook).
+// Atualiza whatsapp.qrcode (string crua, compatível com o front) até conectar.
+const startQrPolling = (session: EvolutionSessionType, whatsapp: Whatsapp) => {
+  const companyId = whatsapp.companyId;
+  let ticks = 0;
+
+  session._qrPoller = setInterval(async () => {
+    ticks += 1;
+    try {
+      const status = await evolutionClient.getStatus(session.token);
+      const connected = status?.data?.Connected || status?.data?.LoggedIn;
+      if (connected) {
+        clearInterval(session._qrPoller);
+        session._qrPoller = undefined;
+        const number = (status?.data?.Name || whatsapp.number || "").replace(/\D/g, "") || whatsapp.number;
+        await whatsapp.update({ status: "CONNECTED", qrcode: "", retries: 0, number });
+        session.user = { id: whatsapp.number ? `${whatsapp.number}@s.whatsapp.net` : "" };
+        emitSession(companyId, whatsapp);
+        return;
+      }
+
+      // ainda não conectado → busca/atualiza o QR
+      const qr = await evolutionClient.getQr(session.token);
+      const rawCode: string = qr?.data?.code || "";
+      // "https://wa.me/settings/linked_devices#2@..." → usa a parte após '#'
+      const code = rawCode.includes("#") ? rawCode.split("#").pop() : rawCode;
+      if (code && code !== whatsapp.qrcode) {
+        await whatsapp.update({ qrcode: code, status: "qrcode", retries: 0, number: "" });
+        emitSession(companyId, whatsapp);
+      }
+    } catch (err: any) {
+      logger.warn(`[evolution] qrPoll wpp:${whatsapp.id}: ${err?.response?.status || err?.message}`);
+    }
+
+    if (ticks >= QR_MAX_TICKS) {
+      clearInterval(session._qrPoller);
+      session._qrPoller = undefined;
+      await whatsapp.update({ status: "DISCONNECTED", qrcode: "" });
+      emitSession(companyId, whatsapp);
+    }
+  }, QR_POLL_MS);
+};
+
+export const stopEvolutionSession = (whatsappId: number, session?: EvolutionSessionType) => {
+  if (session?._qrPoller) clearInterval(session._qrPoller);
+  removeWbotSession(whatsappId);
 };
