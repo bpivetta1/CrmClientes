@@ -94,6 +94,19 @@ export const getWbot = (whatsappId: number): Session => {
   return sessions[sessionIndex];
 };
 
+// Registra/remove uma sessão qualquer (ex.: adapter Evolution-GO) no mesmo
+// registro usado por getWbot, para que os Send*Services funcionem sem alteração.
+export const addWbotSession = (session: any): void => {
+  const idx = sessions.findIndex(s => s.id === session.id);
+  if (idx === -1) sessions.push(session);
+  else sessions[idx] = session;
+};
+
+export const removeWbotSession = (whatsappId: number): void => {
+  const idx = sessions.findIndex(s => s.id === whatsappId);
+  if (idx !== -1) sessions.splice(idx, 1);
+};
+
 export const restartWbot = async (
   companyId: number,
   session?: any

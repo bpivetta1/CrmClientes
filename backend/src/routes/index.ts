@@ -48,6 +48,7 @@ import flowCampaignRoutes from "./flowCampaignRoutes";
 
 
 import httpProxyRoutes from "./httpProxyRoutes";
+import evolutionWebhookRoutes from "./evolutionWebhookRoutes";
 
 
 const routes = Router();
@@ -96,6 +97,7 @@ routes.use(flowBuilder)
 routes.use(flowCampaignRoutes)
 
 
+routes.use(evolutionWebhookRoutes);
 routes.use(promptRoutes);
 routes.use(statisticsRoutes);
 routes.use(companySettingsRoutes);
