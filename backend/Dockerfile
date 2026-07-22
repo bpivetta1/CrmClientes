@@ -11,7 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 make g+
     && rm -rf /var/lib/apt/lists/*
 
 COPY package*.json ./
-RUN npm install --no-audit --no-fund
+# --legacy-peer-deps: baileys@6.7.21 declara peer jimp@^1.6.0, mas o projeto usa
+# jimp@^0.16 (ERESOLVE no npm 7+). O fork oficial instala com --force/legacy.
+RUN npm install --no-audit --no-fund --legacy-peer-deps
 
 COPY . .
 RUN npm run build

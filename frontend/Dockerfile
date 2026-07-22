@@ -11,7 +11,8 @@ ENV REACT_APP_BACKEND_URL=$REACT_APP_BACKEND_URL \
     CI=false
 
 COPY package*.json ./
-RUN npm install --no-audit --no-fund
+# --legacy-peer-deps: React 16 + libs que pedem React 17/18 geram ERESOLVE
+RUN npm install --no-audit --no-fund --legacy-peer-deps
 
 COPY . .
 RUN npm run build
