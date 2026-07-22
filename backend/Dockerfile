@@ -2,8 +2,7 @@
 FROM node:20-bookworm AS builder
 WORKDIR /usr/src/app
 
-# puppeteer's bundled Chromium is not used at runtime (we use system chromium),
-# so skip the heavy download during npm install.
+# puppeteer nao e usado no codigo (engine e Baileys/Evolution); pula o download.
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 
 # native addon build tooling (ws/bufferutil etc.)
@@ -22,13 +21,12 @@ RUN npm run build
 FROM node:20-bookworm-slim
 WORKDIR /usr/src/app
 ENV NODE_ENV=production \
-    PUPPETEER_SKIP_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+    PUPPETEER_SKIP_DOWNLOAD=true
 
-# chromium + ffmpeg + fonts for baileys/puppeteer/media handling; tini as init
+# ffmpeg (conversao de audio) + tini (init). Chromium removido: puppeteer nao e
+# usado no codigo — economiza ~1GB de imagem/disco no build.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      chromium ffmpeg tini ca-certificates \
-      fonts-liberation fonts-noto-color-emoji \
+      ffmpeg tini ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/src/app/node_modules ./node_modules
