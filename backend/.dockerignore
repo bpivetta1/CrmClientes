@@ -1,0 +1,10 @@
+node_modules
+dist
+.env
+*.log
+public/*
+!public/.gitkeep
+certs
+private
+.git
+.DS_Store

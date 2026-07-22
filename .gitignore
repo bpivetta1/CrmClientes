@@ -1,0 +1,22 @@
+# dependencies / build output
+node_modules/
+backend/dist/
+frontend/build/
+
+# secrets & local env
+.env
+backend/.env
+frontend/.env
+
+# runtime uploads (persisted via docker volume, not in git)
+backend/public/*
+!backend/public/.gitkeep
+
+# logs & os cruft
+*.log
+.DS_Store
+
+# dev certs
+backend/certs/
+frontend/certs/
+backend/private/

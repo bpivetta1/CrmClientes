@@ -1,0 +1,86 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-whaticket}
+      POSTGRES_USER: ${DB_USER:-whaticket}
+      POSTGRES_PASSWORD: ${DB_PASS:?set DB_PASS}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-whaticket} -d ${DB_NAME:-whaticket}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASS:?set REDIS_PASS} --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASS}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      # public URL of THIS backend (set the backend domain in Coolify to match)
+      BACKEND_URL: ${BACKEND_URL:?set BACKEND_URL}
+      # public URL of the frontend (used for CORS + links)
+      FRONTEND_URL: ${FRONTEND_URL:?set FRONTEND_URL}
+      PORT: "8081"
+      PROXY_PORT: "443"
+      CERTIFICADOS: "false"
+      DB_DIALECT: postgres
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-whaticket}
+      DB_USER: ${DB_USER:-whaticket}
+      DB_PASS: ${DB_PASS}
+      REDIS_URI: redis://:${REDIS_PASS}@redis:6379
+      REDIS_OPT_LIMITER_MAX: "1"
+      REDIS_OPT_LIMITER_DURATION: "3000"
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?set JWT_REFRESH_SECRET}
+      MASTER_KEY: ${MASTER_KEY:-}
+      USER_LIMIT: ${USER_LIMIT:-10000}
+      CONNECTIONS_LIMIT: ${CONNECTIONS_LIMIT:-100000}
+      CLOSED_SEND_BY_ME: "true"
+      # optional integrations (leave blank if unused)
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      FACEBOOK_APP_ID: ${FACEBOOK_APP_ID:-}
+      FACEBOOK_APP_SECRET: ${FACEBOOK_APP_SECRET:-}
+    volumes:
+      - backend_public:/usr/src/app/public
+    expose:
+      - "8081"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        REACT_APP_BACKEND_URL: ${BACKEND_URL}
+        REACT_APP_HOURS_CLOSE_TICKETS_AUTO: ${REACT_APP_HOURS_CLOSE_TICKETS_AUTO:-24}
+    restart: unless-stopped
+    depends_on:
+      - backend
+    expose:
+      - "3000"
+
+volumes:
+  pg_data:
+  redis_data:
+  backend_public:

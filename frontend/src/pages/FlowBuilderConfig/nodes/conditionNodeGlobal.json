@@ -1,0 +1,39 @@
+{
+  "id": "condNode_001",
+  "type": "condition",
+  "position": { "x": 420, "y": 180 },
+  "data": {
+    "label": "Verificar Situação do Cliente",
+    "description": "Avalia a situação do cliente com base nas variáveis do fluxo.",
+    "typebotIntegration": {
+      "conditions": [
+        {
+          "label": "Cliente ativo e com saldo positivo",
+          "expression": "{{response.bloqueado}} === 'Ativo' && {{response.saldo}} > 0",
+          "target": "nodeAtivoSaldo"
+        },
+        {
+          "label": "Cliente inativo",
+          "expression": "{{response.bloqueado}} !== 'Ativo'",
+          "target": "nodeInativo"
+        },
+        {
+          "label": "Cliente sem saldo",
+          "expression": "{{response.saldo}} <= 0",
+          "target": "nodeSemSaldo"
+        }
+      ],
+      "defaultTarget": "nodeAtendimentoHumano"
+    }
+  },
+  "style": {
+    "borderColor": "#facc15",
+    "borderWidth": 3,
+    "borderStyle": "solid",
+    "borderRadius": 12,
+    "boxShadow": "0 0 15px rgba(250, 204, 21, 0.4)"
+  },
+  "width": 260,
+  "height": 140,
+  "selected": false
+}
