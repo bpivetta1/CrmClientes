@@ -8,6 +8,9 @@ import Contact from "../../models/Contact";
 import { isNil } from "lodash";
 
 import formatBody from "../../helpers/Mustache";
+// import em runtime (chamada dentro da função) — evita problema de ciclo com
+// wbotMessageListener, que importa este arquivo.
+import { verifyMessage } from "./wbotMessageListener";
 
 interface Request {
   body: string;
@@ -96,6 +99,9 @@ const SendWhatsAppMessage = async ({
         }
       );
       await ticket.update({ lastMessage: formatBody(vcard, ticket), imported: null });
+      // Evolution não ecoa a própria mensagem enviada (a Baileys ecoava via
+      // emitOwnEvents) — persistimos aqui para aparecer no chat.
+      try { await verifyMessage(sentMessage, ticket, contactNumber); } catch (e) { console.log("verifyMessage(vcard) falhou", e); }
       return sentMessage;
     } catch (err) {
       Sentry.captureException(err);
@@ -116,6 +122,8 @@ const SendWhatsAppMessage = async ({
       }
     );
     await ticket.update({ lastMessage: formatBody(body, ticket), imported: null });
+    // Evolution não ecoa a própria mensagem enviada — persistimos para o chat.
+    try { await verifyMessage(sentMessage, ticket, contactNumber); } catch (e) { console.log("verifyMessage falhou", e); }
     return sentMessage;
   } catch (err) {
     console.log(`erro ao enviar mensagem na company ${ticket.companyId} - `, body,

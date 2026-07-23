@@ -273,6 +273,31 @@ const SendWhatsAppMedia = async ({
 
     await ticket.update({ lastMessage: body !== media.filename ? body : bodyMedia, imported: null });
 
+    // Evolution não ecoa a própria mídia enviada (a Baileys ecoava via
+    // emitOwnEvents) — persistimos como mensagem de mídia para aparecer no chat.
+    try {
+      const messageData = {
+        wid: sentMessage?.key?.id || `EVO${Date.now()}`,
+        ticketId: ticket.id,
+        contactId: undefined,
+        body: bodyMedia,
+        fromMe: true,
+        mediaUrl: media.filename,
+        mediaType: media.mimetype.split("/")[0],
+        read: true,
+        quotedMsgId: null,
+        ack: 2,
+        remoteJid: number,
+        participant: null,
+        dataJson: JSON.stringify(sentMessage),
+        ticketTrakingId: null,
+        isPrivate: false
+      };
+      await CreateMessageService({ messageData, companyId: ticket.companyId });
+    } catch (e) {
+      console.log("CreateMessageService(midia enviada) falhou", e);
+    }
+
     return sentMessage;
   } catch (err) {
     console.log(`ERRO AO ENVIAR MIDIA ${ticket.id} media ${media.originalname}`)
