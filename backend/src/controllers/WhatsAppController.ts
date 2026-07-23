@@ -9,6 +9,7 @@ import ShowCompanyService from "../services/CompanyService/ShowCompanyService";
 import { getAccessTokenFromPage, getPageProfile, subscribeApp } from "../services/FacebookServices/graphAPI";
 import ShowPlanService from "../services/PlanService/ShowPlanService";
 import { StartWhatsAppSession } from "../services/WbotServices/StartWhatsAppSession";
+import { deleteEvolutionInstance } from "../libs/evolution/EvolutionSession";
 
 import CreateWhatsAppService from "../services/WhatsappService/CreateWhatsAppService";
 import DeleteWhatsAppService from "../services/WhatsappService/DeleteWhatsAppService";
@@ -400,6 +401,8 @@ export const remove = async (
 
 
   if (whatsapp.channel === "whatsapp") {
+    // exclui também a instância no servidor Evolution (evita órfãs)
+    await deleteEvolutionInstance({ id: whatsapp.id, companyId: whatsapp.companyId });
     await DeleteBaileysService(whatsappId);
     await DeleteWhatsAppService(whatsappId);
     await cacheLayer.delFromPattern(`sessions:${whatsappId}:*`);
@@ -510,6 +513,8 @@ export const removeAdmin = async (
 
 
   if (whatsapp.channel === "whatsapp") {
+    // exclui também a instância no servidor Evolution (evita órfãs)
+    await deleteEvolutionInstance({ id: whatsapp.id, companyId: whatsapp.companyId });
     await DeleteBaileysService(whatsappId);
     await DeleteWhatsAppService(whatsappId);
     await cacheLayer.delFromPattern(`sessions:${whatsappId}:*`);

@@ -66,7 +66,9 @@ export const handleEvolutionWebhook = async (req: Request, res: Response): Promi
       // reforço à detecção por polling
       const connected = data?.Connected || data?.status === "connected" || ev.includes("CONNECTED");
       if (ev.includes("LOGGED")) {
-        await whatsapp.update({ status: "PENDING", session: "", qrcode: "" });
+        // DISCONNECTED (não PENDING): o frontend renderiza o botão
+        // "Tentar novamente" para DISCONNECTED; PENDING não renderiza nada.
+        await whatsapp.update({ status: "DISCONNECTED", session: "", qrcode: "" });
         emitSession(companyId, whatsapp);
       } else if (connected) {
         const number = (data?.jid || "").split("@")[0] || whatsapp.number || "";

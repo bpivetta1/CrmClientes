@@ -214,12 +214,14 @@ const startQrPolling = (session: EvolutionSessionType, whatsapp: Whatsapp) => {
     ticks += 1;
     try {
       const status = await evolutionClient.getStatus(session.token);
-      const connected = status?.data?.Connected || status?.data?.LoggedIn;
-      if (connected) {
+      // IMPORTANTE: Connected=true significa apenas "websocket aberto aguardando
+      // QR scan". Pareado de verdade é somente LoggedIn=true.
+      const loggedIn = !!status?.data?.LoggedIn;
+      if (loggedIn) {
         clearInterval(session._qrPoller);
         session._qrPoller = undefined;
-        const number = (status?.data?.Name || whatsapp.number || "").replace(/\D/g, "") || whatsapp.number;
-        await whatsapp.update({ status: "CONNECTED", qrcode: "", retries: 0, number });
+        // o número real chega pelo webhook "Connected" (data.jid)
+        await whatsapp.update({ status: "CONNECTED", qrcode: "", retries: 0 });
         session.user = { id: whatsapp.number ? `${whatsapp.number}@s.whatsapp.net` : "" };
         emitSession(companyId, whatsapp);
         return;
@@ -250,4 +252,33 @@ const startQrPolling = (session: EvolutionSessionType, whatsapp: Whatsapp) => {
 export const stopEvolutionSession = (whatsappId: number, session?: EvolutionSessionType) => {
   if (session?._qrPoller) clearInterval(session._qrPoller);
   removeWbotSession(whatsappId);
+};
+
+// Exclui a instância correspondente no servidor Evolution (chamado quando a
+// conexão é excluída no CRM — evita instâncias órfãs acumulando).
+// Acha o UUID via /instance/all (nome determinístico), faz logout e delete.
+export const deleteEvolutionInstance = async (whatsapp: { id: number; companyId: number }): Promise<void> => {
+  const instanceName = `whaticket-${whatsapp.companyId}-${whatsapp.id}`;
+  const token = evolutionTokenFor(whatsapp as Whatsapp);
+  try {
+    const all = await evolutionClient.listInstances();
+    const found = (all?.data || []).find(
+      (i: any) => i?.name === instanceName || i?.token === token
+    );
+    if (!found?.id) {
+      logger.warn(`[evolution] deleteInstance: ${instanceName} não encontrada no servidor`);
+      return;
+    }
+    try {
+      await evolutionClient.logout(found.token || token);
+    } catch (e: any) {
+      logger.warn(`[evolution] logout pré-delete ${instanceName}: ${e?.response?.status || e?.message}`);
+    }
+    await evolutionClient.deleteInstance(found.id);
+    logger.info(`[evolution] instância ${instanceName} (${found.id}) excluída`);
+  } catch (err: any) {
+    logger.error(
+      `[evolution] deleteInstance ${instanceName}: ${err?.response?.status || err?.message} ${JSON.stringify(err?.response?.data || "")}`
+    );
+  }
 };
