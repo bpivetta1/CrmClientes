@@ -4,7 +4,8 @@ WORKDIR /usr/src/app
 
 # CRA bakes REACT_APP_* into the bundle at build time, so the backend URL must
 # be known here. Passed from docker-compose build args / Coolify env.
-ARG REACT_APP_BACKEND_URL
+# default = dominio real do backend; sobrescreva via build-arg/env se mudar
+ARG REACT_APP_BACKEND_URL=https://crmclienteback.nefo.pro
 ARG REACT_APP_HOURS_CLOSE_TICKETS_AUTO=24
 ENV REACT_APP_BACKEND_URL=$REACT_APP_BACKEND_URL \
     REACT_APP_HOURS_CLOSE_TICKETS_AUTO=$REACT_APP_HOURS_CLOSE_TICKETS_AUTO \
