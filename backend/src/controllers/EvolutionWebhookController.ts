@@ -10,7 +10,7 @@ import { Request, Response } from "express";
 import Whatsapp from "../models/Whatsapp";
 import { getIO } from "../libs/socket";
 import { getWbot } from "../libs/wbot";
-import { handleMessage } from "../services/WbotServices/wbotMessageListener";
+import { handleMessage, handleMsgAck } from "../services/WbotServices/wbotMessageListener";
 import logger from "../utils/logger";
 
 const emitSession = (companyId: number, session: Whatsapp) => {
@@ -77,9 +77,25 @@ export const handleEvolutionWebhook = async (req: Request, res: Response): Promi
         await whatsapp.update({ status: "CONNECTED", qrcode: "", retries: 0, number });
         emitSession(companyId, whatsapp);
       }
-    } else if (ev.includes("READ")) {
-      // ACK / read receipts — Fase 5
-      logger.debug(`[evolution] READ_RECEIPT wpp:${whatsappId}`);
+    } else if (ev.includes("READ") || ev.includes("RECEIPT") || ev.includes("ACK")) {
+      // Recibos de entrega/leitura → atualiza o ACK (checkmarks) no chat.
+      // whatsmeow: Type ""/"delivery"=entregue(2), "read"/"read-self"=lido(3),
+      // "played"=áudio ouvido(5). IDs em MessageIDs (ou MessageID/Ids).
+      logger.info(`[evolution][receipt][wpp:${whatsappId}] ${JSON.stringify(data).slice(0, 800)}`);
+      const type = String(data?.Type || data?.type || "").toLowerCase();
+      let ack = 2;
+      if (type.includes("read")) ack = 3;
+      else if (type.includes("play")) ack = 5;
+      const ids: string[] =
+        data?.MessageIDs || data?.MessageIds || data?.Ids ||
+        (data?.MessageID ? [data.MessageID] : []) || [];
+      for (const id of ids) {
+        try {
+          await handleMsgAck({ key: { id } } as any, ack);
+        } catch (e) {
+          logger.warn(`[evolution] handleMsgAck ${id}: ${e}`);
+        }
+      }
     } else {
       logger.debug(`[evolution] evento não tratado: ${event}`);
     }

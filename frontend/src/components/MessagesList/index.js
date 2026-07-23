@@ -86,8 +86,8 @@ const useStyles = makeStyles((theme) => ({
   },
 
   messagesList: {
-    backgroundImage: theme.mode === 'light' ? `url(${whatsBackground})` : `url(${whatsBackgroundDark})`,
-    backgroundColor: theme.mode === 'light' ? "transparent" : "#0b0b0d",
+    // fundo neutro (sem imagem do WhatsApp)
+    backgroundColor: theme.mode === 'light' ? "#f5f6f8" : "#0b0b0d",
     display: "flex",
     flexDirection: "column",
     flexGrow: 1,
@@ -340,7 +340,7 @@ const useStyles = makeStyles((theme) => ({
   },
 
   ackDoneAllIcon: {
-    color: blue[500],
+    color: green[500],
     fontSize: 18,
     verticalAlign: "middle",
     marginLeft: 4,

@@ -64,7 +64,9 @@ const mapMediaType = (content: any) => {
 
 // monta um objeto no formato WAMessage que os callers esperam ler
 const toWAMessage = (res: any, jid: string, text: string) => {
-  const id = res?.data?.id || res?.id || res?.key?.id || uuidv4();
+  // log p/ confirmar que o id da resposta de envio == id nos recibos (ACK)
+  logger.info(`[evolution][send-resp] ${JSON.stringify(res).slice(0, 400)}`);
+  const id = res?.data?.id || res?.id || res?.data?.key?.id || res?.key?.id || uuidv4();
   return {
     key: { id, remoteJid: jid, fromMe: true },
     message: { conversation: text },
