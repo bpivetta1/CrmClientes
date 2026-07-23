@@ -71,7 +71,9 @@ export const handleEvolutionWebhook = async (req: Request, res: Response): Promi
         await whatsapp.update({ status: "DISCONNECTED", session: "", qrcode: "" });
         emitSession(companyId, whatsapp);
       } else if (connected) {
-        const number = (data?.jid || "").split("@")[0] || whatsapp.number || "";
+        // jid "5527999999999:2@s.whatsapp.net" → número sem sufixo de device
+        const number =
+          (data?.jid || "").split("@")[0].split(":")[0] || whatsapp.number || "";
         await whatsapp.update({ status: "CONNECTED", qrcode: "", retries: 0, number });
         emitSession(companyId, whatsapp);
       }

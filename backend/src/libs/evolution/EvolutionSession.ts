@@ -236,9 +236,17 @@ const startQrPolling = (session: EvolutionSessionType, whatsapp: Whatsapp) => {
       if (loggedIn) {
         clearInterval(session._qrPoller);
         session._qrPoller = undefined;
-        // o número real chega pelo webhook "Connected" (data.jid)
-        await whatsapp.update({ status: "CONNECTED", qrcode: "", retries: 0 });
-        session.user = { id: whatsapp.number ? `${whatsapp.number}@s.whatsapp.net` : "" };
+        // busca o número real (jid) na Evolution
+        const number =
+          (await fetchInstanceNumber(`whaticket-${companyId}-${whatsapp.id}`)) ||
+          whatsapp.number;
+        await whatsapp.update({
+          status: "CONNECTED",
+          qrcode: "",
+          retries: 0,
+          ...(number ? { number } : {})
+        });
+        session.user = { id: number ? `${number}@s.whatsapp.net` : "" };
         emitSession(companyId, whatsapp);
         return;
       }
@@ -263,6 +271,20 @@ const startQrPolling = (session: EvolutionSessionType, whatsapp: Whatsapp) => {
       emitSession(companyId, whatsapp);
     }
   }, QR_POLL_MS);
+};
+
+// Busca o número (jid) de uma instância via /instance/all.
+// jid tem formato "5527999999999:2@s.whatsapp.net" → número = antes de ':' e '@'.
+export const fetchInstanceNumber = async (instanceName: string): Promise<string> => {
+  try {
+    const all = await evolutionClient.listInstances();
+    const found = (all?.data || []).find((i: any) => i?.name === instanceName);
+    const jid: string = found?.jid || "";
+    return jid.split("@")[0].split(":")[0];
+  } catch (err: any) {
+    logger.warn(`[evolution] fetchInstanceNumber ${instanceName}: ${err?.message}`);
+    return "";
+  }
 };
 
 export const stopEvolutionSession = (whatsappId: number, session?: EvolutionSessionType) => {
