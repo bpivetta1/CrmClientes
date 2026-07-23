@@ -22,8 +22,17 @@ export const StartWhatsAppSession = async (
 
   try {
     await initEvolutionSession(whatsapp);
-  } catch (err) {
+  } catch (err: any) {
     Sentry.captureException(err);
-    logger.error(`[evolution] StartWhatsAppSession: ${err}`);
+    logger.error(
+      `[evolution] StartWhatsAppSession wpp:${whatsapp.id}: ${err?.message} ${JSON.stringify(err?.response?.data || "")}`
+    );
+    // não deixa a UI presa em "Conectando" — marca desconectado e avisa o front
+    await whatsapp.update({ status: "DISCONNECTED", qrcode: "" });
+    io.of(String(companyId))
+      .emit(`company-${companyId}-whatsappSession`, {
+        action: "update",
+        session: whatsapp
+      });
   }
 };

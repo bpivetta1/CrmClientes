@@ -15,6 +15,7 @@ import logger from "../../utils/logger";
 import Whatsapp from "../../models/Whatsapp";
 import { getIO } from "../socket";
 import { evolutionClient, EvolutionMediaType } from "./EvolutionClient";
+import evolutionConfig from "../../config/evolution";
 import { addWbotSession, removeWbotSession } from "../wbot";
 
 const publicFolder = path.resolve(__dirname, "..", "..", "..", "public");
@@ -91,6 +92,13 @@ export interface EvolutionSessionType {
 }
 
 export const initEvolutionSession = async (whatsapp: Whatsapp): Promise<EvolutionSessionType> => {
+  if (!evolutionConfig.apiKey) {
+    throw new Error("EVOLUTION_API_KEY não configurada no backend (defina no Coolify)");
+  }
+  if (!backendUrl) {
+    throw new Error("BACKEND_URL não configurada (necessária para o webhook da Evolution)");
+  }
+
   const token = evolutionTokenFor(whatsapp);
   const instanceName = `whaticket-${whatsapp.companyId}-${whatsapp.id}`;
   const webhookUrl = `${backendUrl}/evolution/webhook/${whatsapp.id}`;
@@ -100,13 +108,22 @@ export const initEvolutionSession = async (whatsapp: Whatsapp): Promise<Evolutio
   try {
     await evolutionClient.createInstance({ name: instanceName, token });
   } catch (err: any) {
-    logger.warn(`[evolution] createInstance ${instanceName}: ${err?.response?.status || err?.message}`);
+    logger.warn(
+      `[evolution] createInstance ${instanceName}: ${err?.response?.status || err?.message} ${JSON.stringify(err?.response?.data || "")}`
+    );
   }
-  await evolutionClient.connectInstance(token, {
-    webhookUrl,
-    subscribe: SUBSCRIBE_EVENTS,
-    immediate: true
-  });
+  try {
+    await evolutionClient.connectInstance(token, {
+      webhookUrl,
+      subscribe: SUBSCRIBE_EVENTS,
+      immediate: true
+    });
+  } catch (err: any) {
+    logger.error(
+      `[evolution] connectInstance ${instanceName}: ${err?.response?.status || err?.message} ${JSON.stringify(err?.response?.data || "")}`
+    );
+    throw err;
+  }
 
   const session: EvolutionSessionType = {
     id: whatsapp.id,
