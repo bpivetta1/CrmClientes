@@ -15,7 +15,11 @@ COPY package*.json ./
 RUN npm install --no-audit --no-fund --legacy-peer-deps
 
 COPY . .
-RUN npm run build
+# Build do CRA direto (evita o cross-env do script sobrescrever NODE_OPTIONS),
+# com heap maior p/ nao dar OOM (Killed) no build em VPS.
+RUN NODE_OPTIONS="--openssl-legacy-provider --max-old-space-size=4096" \
+    GENERATE_SOURCEMAP=false CI=false \
+    ./node_modules/.bin/react-scripts build
 
 # ---- runtime stage ----
 FROM node:20-bookworm-slim
