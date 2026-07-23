@@ -104,13 +104,29 @@ export const initEvolutionSession = async (whatsapp: Whatsapp): Promise<Evolutio
   const webhookUrl = `${backendUrl}/evolution/webhook/${whatsapp.id}`;
   const companyId = whatsapp.companyId;
 
-  // cria a instância (idempotente — ignora se já existe) e conecta com webhook
+  // Comprovado ao vivo: instância que entrou em "close" (QR expirado) fica
+  // presa — /instance/connect responde success mas nunca mais gera QR
+  // (reconnect exige sessão ativa; forcereconnect exige phone/pairing-code).
+  // Solução: se NÃO estiver pareada (LoggedIn=false), recria a instância do
+  // zero (delete+create) para forçar um novo ciclo de QR. Se estiver pareada,
+  // preserva a sessão e apenas reconecta/reassina o webhook.
+  let loggedIn = false;
   try {
-    await evolutionClient.createInstance({ name: instanceName, token });
-  } catch (err: any) {
-    logger.warn(
-      `[evolution] createInstance ${instanceName}: ${err?.response?.status || err?.message} ${JSON.stringify(err?.response?.data || "")}`
-    );
+    const st = await evolutionClient.getStatus(token);
+    loggedIn = !!st?.data?.LoggedIn;
+  } catch {
+    /* instância ainda não existe — segue para criação */
+  }
+
+  if (!loggedIn) {
+    await deleteEvolutionInstance({ id: whatsapp.id, companyId });
+    try {
+      await evolutionClient.createInstance({ name: instanceName, token });
+    } catch (err: any) {
+      logger.warn(
+        `[evolution] createInstance ${instanceName}: ${err?.response?.status || err?.message} ${JSON.stringify(err?.response?.data || "")}`
+      );
+    }
   }
   try {
     await evolutionClient.connectInstance(token, {
